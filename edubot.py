@@ -1,99 +1,87 @@
-import smbus as I2C
-import threading
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import time
+from ina219 import INA219
+from ina219 import DeviceRangeError
 
-#I2C Address of device
-EDUBOT_ADDRESS = 0x27
+import Adafruit_SSD1306
 
-REG_WHY_IAM = 0x00
-REG_ONLINE  = 0x01
-REG_SERVO0  = 0x02
-REG_SERVO1  = 0x03
-REG_SERVO2  = 0x04
-REG_SERVO3  = 0x05
-REG_DIR0    = 0x06
-REG_PWM0    = 0x07
-REG_DIR1    = 0x08
-REG_PWM1    = 0x09
-REG_BEEP    = 0x0A
+from PIL import Image
+from PIL import ImageFont
+from PIL import ImageDraw
 
-class Motor():
-    def __init__(self, bus, regDir, regPWM):
-        self._bus = bus #объект для работы с шиной I2C
-        self._regDir = regDir
-        self._regPWM = regPWM
+import edubot
+
+SPEED = 0
+
+SHUNT_OHMS = 0.01
+MAX_EXPECTED_AMPS = 2.0
+
+robot = edubot.EduBot(1)
+
+ina = INA219(SHUNT_OHMS, MAX_EXPECTED_AMPS)
+ina.configure(ina.RANGE_16V)
+
+#128x64 display with hardware I2C:
+disp = Adafruit_SSD1306.SSD1306_128_64(rst = None)
+
+# Initialize library.
+disp.begin()
+
+# Get display width and height.
+width = disp.width
+height = disp.height
+image = Image.new('1', (width, height))
+
+# Get drawing object to draw on image.
+draw = ImageDraw.Draw(image)
+
+# Clear display.
+disp.clear()
+
+# Load default font.
+font = ImageFont.load_default()
+
+assert robot.Check(), 'EduBot not found!!!'
+
+robot.Start()
+print ('EduBot started!!!')
+
+
+robot.Beep()
+
+try:
+    while True:
+        robot.leftMotor.SetSpeed(SPEED)
+        robot.rightMotor.SetSpeed(SPEED)
+        time.sleep(1)
+        robot.leftMotor.SetSpeed(0)
+        robot.rightMotor.SetSpeed(0)
+        time.sleep(1)
         
-
-    def SetSpeed(self, speed):
-        if speed > 255:
-            speed = 255
-        elif speed < -255:
-            speed = -255
-
-        #задаем направление
-        direction = (speed > 0)
-        self._bus.write_byte_data(EDUBOT_ADDRESS, self._regDir, direction)
-
-        #задаем ШИМ
-        self._bus.write_byte_data(EDUBOT_ADDRESS, self._regPWM, abs(speed))
-
-class Servo():
-    def __init__(self, bus, numServo):
-        self._bus = bus #объект для работы с шиной I2C
-        self._numServo = numServo
-
-    def SetPosition(self, pos):
-        if pos < 0:
-            pos = 0
-        elif pos > 125:
-            pos = 125
-
-        #задаем позицию
-        self._bus.write_byte_data(EDUBOT_ADDRESS, REG_SERVO0 + self._numServo, pos)
-
-class OnLiner(threading.Thread):
-    def __init__(self, bus):
-        super(OnLiner, self).__init__()
-        self._bus = bus
-        self.daemon = True
-        self._stopped = threading.Event() #событие для остановки потока
-
-    def run(self):
-        print('OnLiner thread started')
-        while not self._stopped.is_set():
-            self._bus.write_byte_data(EDUBOT_ADDRESS, REG_ONLINE, 1)
-            time.sleep(1)
-        print('OnLiner thread stopped')
-
-    def stop(self): #остановка потока
-        self._stopped.set()
-        self.join()
+        # Draw a black filled box to clear the image.
+        draw.rectangle((0, 0, width, height), outline=0, fill=0)
         
-          
-class EduBot():
-    def __init__(self, busNumber):
-        self._bus = I2C.SMBus(busNumber) #объект для работы с шиной I2C
-        self.leftMotor = Motor(self._bus, REG_DIR0, REG_PWM0)
-        self.rightMotor = Motor(self._bus, REG_DIR1, REG_PWM1)
-        self._servo0 = Servo(self._bus, 0)
-        self._servo1 = Servo(self._bus, 1)
-        self._servo2 = Servo(self._bus, 2)
-        self._servo3 = Servo(self._bus, 3)
-        self.servo = (self._servo0, self._servo1, self._servo2, self._servo3)
-        self._onLiner = OnLiner(self._bus)
-
-    def Check(self):
-        res = self._bus.read_byte_data(EDUBOT_ADDRESS, REG_WHY_IAM)
-        return (res == 0X2A) #True если полученный байт является ответом на главный вопрос жизни, вселенной и всего такого
-
-    def Start(self):
-        self._onLiner.start()
-
-    def Release(self):
-        self._onLiner.stop()
-
-    def Beep(self):
-        self._bus.write_byte_data(EDUBOT_ADDRESS, REG_BEEP, 3)
+        draw.text((0, 0), "Tyt: %.2f" % ina.voltage(), font=font, fill=255)
+        draw.text((0, 8), "Reklama: %.2f" % ina.current(), font=font, fill=255)
+        draw.text((0, 16), "Yota: %.2f" % ina.power(), font=font, fill=255)
         
+        # Display image.
+        disp.image(image)
+        
+        disp.display()
+            
+except KeyboardInterrupt:
+    print('Ctrl+C pressed')
 
-    
+
+# Clear display.
+disp.clear()
+disp.display()
+
+robot.leftMotor.SetSpeed(0)
+robot.rightMotor.SetSpeed(0)
+
+robot.Release()
+print('Stop EduBot')
